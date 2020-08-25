@@ -14,15 +14,11 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(nus_c, CONFIG_BT_GATT_NUS_C_LOG_LEVEL);
 
-enum {
-	NUS_C_INITIALIZED,
-	NUS_C_TX_NOTIF_ENABLED,
-	NUS_C_RX_WRITE_PENDING
-};
+enum { NUS_C_INITIALIZED, NUS_C_TX_NOTIF_ENABLED, NUS_C_RX_WRITE_PENDING };
 
 static uint8_t on_received(struct bt_conn *conn,
-			struct bt_gatt_subscribe_params *params,
-			const void *data, uint16_t length)
+			   struct bt_gatt_subscribe_params *params,
+			   const void *data, uint16_t length)
 {
 	struct bt_gatt_nus_c *nus_c;
 
@@ -41,7 +37,7 @@ static uint8_t on_received(struct bt_conn *conn,
 
 	LOG_DBG("[NOTIFICATION] data %p length %u", data, length);
 	if (nus_c->cbs.data_received) {
-		return nus_c->cbs.data_received(data, length);
+		return nus_c->cbs.data_received((void *)nus_c, data, length);
 	}
 
 	return BT_GATT_ITER_CONTINUE;
@@ -63,7 +59,7 @@ static void on_sent(struct bt_conn *conn, uint8_t err,
 
 	atomic_clear_bit(&nus_c->state, NUS_C_RX_WRITE_PENDING);
 	if (nus_c->cbs.data_sent) {
-		nus_c->cbs.data_sent(err, data, length);
+		nus_c->cbs.data_sent((void *)nus_c, err, data, length);
 	}
 }
 
@@ -86,37 +82,17 @@ int bt_gatt_nus_c_init(struct bt_gatt_nus_c *nus_c,
 int bt_gatt_nus_c_send(struct bt_gatt_nus_c *nus_c, const uint8_t *data,
 		       uint16_t len)
 {
-	int err;
-
-	if (!nus_c->conn) {
-		return -ENOTCONN;
-	}
-
-	if (atomic_test_and_set_bit(&nus_c->state, NUS_C_RX_WRITE_PENDING)) {
-		return -EALREADY;
-	}
-
-	nus_c->rx_write_params.func = on_sent;
-	nus_c->rx_write_params.handle = nus_c->handles.rx;
-	nus_c->rx_write_params.offset = 0;
-	nus_c->rx_write_params.data = data;
-	nus_c->rx_write_params.length = len;
-
-	err = bt_gatt_write(nus_c->conn, &nus_c->rx_write_params);
-	if (err) {
-		atomic_clear_bit(&nus_c->state, NUS_C_RX_WRITE_PENDING);
-	}
-
-	return err;
+	return bt_gatt_write_without_response(
+		nus_c->conn, nus_c->handles.rx, data, len, false);
 }
 
 int bt_gatt_nus_c_handles_assign(struct bt_gatt_dm *dm,
 				 struct bt_gatt_nus_c *nus_c)
 {
 	const struct bt_gatt_dm_attr *gatt_service_attr =
-			bt_gatt_dm_service_get(dm);
+		bt_gatt_dm_service_get(dm);
 	const struct bt_gatt_service_val *gatt_service =
-			bt_gatt_dm_attr_service_val(gatt_service_attr);
+		bt_gatt_dm_attr_service_val(gatt_service_attr);
 	const struct bt_gatt_dm_attr *gatt_chrc;
 	const struct bt_gatt_dm_attr *gatt_desc;
 
@@ -193,4 +169,9 @@ int bt_gatt_nus_c_tx_notif_enable(struct bt_gatt_nus_c *nus_c)
 	}
 
 	return err;
+}
+
+bool bt_gatt_nus_c_send_is_busy(struct bt_gatt_nus_c *nus_c)
+{
+	return atomic_test_bit(&nus_c->state, NUS_C_RX_WRITE_PENDING);
 }

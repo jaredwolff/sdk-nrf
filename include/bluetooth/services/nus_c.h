@@ -26,18 +26,17 @@ extern "C" {
  * the device.
  */
 struct bt_gatt_nus_c_handles {
-
-        /** Handle of the NUS RX characteristic, as provided by
+	/** Handle of the NUS RX characteristic, as provided by
 	 *  a discovery.
          */
 	uint16_t rx;
 
-        /** Handle of the NUS TX characteristic, as provided by
+	/** Handle of the NUS TX characteristic, as provided by
 	 *  a discovery.
          */
 	uint16_t tx;
 
-        /** Handle of the CCC descriptor of the NUS TX characteristic,
+	/** Handle of the CCC descriptor of the NUS TX characteristic,
 	 *  as provided by a discovery.
          */
 	uint16_t tx_ccc;
@@ -56,7 +55,7 @@ struct bt_gatt_nus_c_cbs {
 	 * @retval BT_GATT_ITER_CONTINUE To keep notifications enabled.
 	 * @retval BT_GATT_ITER_STOP To disable notifications.
 	 */
-	uint8_t (*data_received)(const uint8_t *data, uint16_t len);
+	uint8_t (*data_received)(void *ctx, const uint8_t *data, uint16_t len);
 
 	/** @brief Data sent callback.
 	 *
@@ -66,7 +65,8 @@ struct bt_gatt_nus_c_cbs {
 	 * @param[in] data Transmitted data.
 	 * @param[in] len Length of transmitted data.
 	 */
-	void (*data_sent)(uint8_t err, const uint8_t *data, uint16_t len);
+	void (*data_sent)(void *ctx, uint8_t err, const uint8_t *data,
+			  uint16_t len);
 
 	/** @brief TX notifications disabled callback.
 	 *
@@ -77,32 +77,30 @@ struct bt_gatt_nus_c_cbs {
 
 /** @brief NUS Client structure. */
 struct bt_gatt_nus_c {
-
-        /** Connection object. */
+	/** Connection object. */
 	struct bt_conn *conn;
 
-        /** Internal state. */
+	/** Internal state. */
 	atomic_t state;
 
-        /** Handles on the connected peer device that are needed
+	/** Handles on the connected peer device that are needed
          * to interact with the device.
          */
 	struct bt_gatt_nus_c_handles handles;
 
-        /** GATT subscribe parameters for NUS TX Characteristic. */
+	/** GATT subscribe parameters for NUS TX Characteristic. */
 	struct bt_gatt_subscribe_params tx_notif_params;
 
-        /** GATT write parameters for NUS RX Characteristic. */
+	/** GATT write parameters for NUS RX Characteristic. */
 	struct bt_gatt_write_params rx_write_params;
 
-        /** Application callbacks. */
+	/** Application callbacks. */
 	struct bt_gatt_nus_c_cbs cbs;
 };
 
 /** @brief NUS Client initialization structure. */
 struct bt_gatt_nus_c_init_param {
-
-        /** Callbacks provided by the user. */
+	/** Callbacks provided by the user. */
 	struct bt_gatt_nus_c_cbs cbs;
 };
 
@@ -168,6 +166,8 @@ int bt_gatt_nus_c_handles_assign(struct bt_gatt_dm *dm,
  *           Otherwise, a negative error code is returned.
  */
 int bt_gatt_nus_c_tx_notif_enable(struct bt_gatt_nus_c *nus_c);
+
+bool bt_gatt_nus_c_send_is_busy();
 
 #ifdef __cplusplus
 }

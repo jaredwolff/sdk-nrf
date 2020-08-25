@@ -34,6 +34,10 @@ static bool connected;
 /* File descriptor */
 static struct pollfd fds;
 
+#if defined(CONFIG_MQTT_LIB_TLS)
+static sec_tag_t sec_tag_list[] = { CONFIG_SEC_TAG };
+#endif /* defined(CONFIG_MQTT_LIB_TLS) */ 
+
 #if defined(CONFIG_BSD_LIBRARY)
 
 /**@brief Recoverable BSD library error. */
@@ -332,7 +336,16 @@ static void client_init(struct mqtt_client *client)
 
 	/* MQTT transport configuration */
 #if defined(CONFIG_MQTT_LIB_TLS)
+	struct mqtt_sec_config *tls_config = &client->transport.tls.config;
+	
 	client->transport.type = MQTT_TRANSPORT_SECURE;
+	
+	tls_config->peer_verify = CONFIG_PEER_VERIFY;
+	tls_config->cipher_count = 0;
+	tls_config->cipher_list = NULL;
+	tls_config->sec_tag_count = ARRAY_SIZE(sec_tag_list);
+	tls_config->sec_tag_list = sec_tag_list;
+	tls_config->hostname = CONFIG_MQTT_BROKER_HOSTNAME;
 #else
 	client->transport.type = MQTT_TRANSPORT_NON_SECURE;
 #endif

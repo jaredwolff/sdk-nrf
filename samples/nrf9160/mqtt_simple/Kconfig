@@ -5,6 +5,17 @@
 #
 
 menu "MQTT simple sample"
+
+config SEC_TAG
+	int "Security tag to use for the connection"
+	default 16842753
+
+config PEER_VERIFY
+	int "Peer verify parameter for mqtt_client"
+	default 1
+	help
+			Set to 0 for VERIFY_NONE, 1 for VERIFY_OPTIONAL, and 2 for VERIFY_REQUIRED.
+
 config MQTT_PUB_TOPIC
 	string "MQTT publish topic"
 	default "my/publish/topic"

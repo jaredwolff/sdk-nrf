@@ -7,6 +7,7 @@
 #include <string.h>
 #include <zephyr.h>
 #include <stdlib.h>
+#include <drivers/gpio.h>
 #include <net/socket.h>
 #include <modem/bsdlib.h>
 #include <net/tls_credentials.h>
@@ -29,16 +30,18 @@
 #define RECV_BUF_SIZE 2048
 #define TLS_SEC_TAG 42
 
+#define GPIO0 DT_LABEL(DT_NODELABEL(gpio0))
+struct device *gpio_port;
+
 static const char send_buf[] = HTTP_HEAD;
 static char recv_buf[RECV_BUF_SIZE];
 
 /* Certificate for `google.com` */
 static const char cert[] = {
-	#include "../cert/GlobalSign-Root-CA-R2"
+#include "../cert/GlobalSign-Root-CA-R2"
 };
 
 BUILD_ASSERT(sizeof(cert) < KB(4), "Certificate too large");
-
 
 /* Initialize AT communications */
 int at_comms_init(void)
@@ -57,6 +60,11 @@ int at_comms_init(void)
 		return err;
 	}
 
+	// Setting up PDP context
+	at_cmd_write("AT+CGDCONT=2,\"IPV4V6\",\"VZWADMIN\"", NULL, 0, NULL);
+	at_cmd_write("AT+CGDCONT=3,\"IPV4V6\",\"VZWINTERNET\"", NULL, 0, NULL);
+	at_cmd_write("AT+CGDCONT=4,\"IPV4V6\",\"VZWAPP\"", NULL, 0, NULL);
+
 	return 0;
 }
 
@@ -68,8 +76,8 @@ int cert_provision(void)
 	uint8_t unused;
 
 	err = modem_key_mgmt_exists(TLS_SEC_TAG,
-				    MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN,
-				    &exists, &unused);
+				    MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN, &exists,
+				    &unused);
 	if (err) {
 		printk("Failed to check for certificates err %d\n", err);
 		return err;
@@ -91,8 +99,8 @@ int cert_provision(void)
 
 	/*  Provision certificate to the modem */
 	err = modem_key_mgmt_write(TLS_SEC_TAG,
-				   MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN,
-				   cert, sizeof(cert) - 1);
+				   MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN, cert,
+				   sizeof(cert) - 1);
 	if (err) {
 		printk("Failed to provision certificate, err %d\n", err);
 		return err;
@@ -113,10 +121,9 @@ int tls_setup(int fd)
 	};
 
 	/* Set up TLS peer verification */
-	enum {
-		NONE = 0,
-		OPTIONAL = 1,
-		REQUIRED = 2,
+	enum { NONE = 0,
+	       OPTIONAL = 1,
+	       REQUIRED = 2,
 	};
 
 	verify = REQUIRED;
@@ -136,6 +143,20 @@ int tls_setup(int fd)
 		printk("Failed to setup TLS sec tag, err %d\n", errno);
 		return err;
 	}
+
+	return 0;
+}
+
+static int button_init()
+{
+	/* Get the device binding */
+	gpio_port = device_get_binding(GPIO0);
+	if (gpio_port == NULL) {
+		return -ENODEV;
+	}
+
+	/* Configure latch pin as output. */
+	gpio_pin_configure(gpio_port, 12, GPIO_INPUT | GPIO_PULL_UP);
 
 	return 0;
 }
@@ -173,76 +194,88 @@ void main(void)
 		return;
 	}
 
-	printk("Waiting for network.. ");
-	err = lte_lc_init_and_connect();
+	err = button_init();
 	if (err) {
-		printk("Failed to connect to the LTE network, err %d\n", err);
-		return;
-	}
-	printk("OK\n");
-
-	err = getaddrinfo("google.com", NULL, &hints, &res);
-	if (err) {
-		printk("getaddrinfo() failed, err %d\n", errno);
 		return;
 	}
 
-	((struct sockaddr_in *)res->ai_addr)->sin_port = htons(HTTPS_PORT);
+	while (1) {
+		/* Wait if the button is not pressed*/
+		if (gpio_pin_get(gpio_port, 12) == 1) {
+			k_sleep(K_MSEC(100));
+			continue;
+		}
 
-	fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TLS_1_2);
-	if (fd == -1) {
-		printk("Failed to open socket!\n");
-		goto clean_up;
-	}
+		printk("Waiting for network.. ");
+		err = lte_lc_init_and_connect();
+		printk("OK\n");
 
-	/* Setup TLS socket options */
-	err = tls_setup(fd);
-	if (err) {
-		goto clean_up;
-	}
+		err = getaddrinfo("google.com", NULL, &hints, &res);
+		if (err) {
+			printk("getaddrinfo() failed, err %d\n", errno);
+			return;
+		}
 
-	printk("Connecting to %s\n", "google.com");
-	err = connect(fd, res->ai_addr, sizeof(struct sockaddr_in));
-	if (err) {
-		printk("connect() failed, err: %d\n", errno);
-		goto clean_up;
-	}
+		((struct sockaddr_in *)res->ai_addr)->sin_port =
+			htons(HTTPS_PORT);
 
-	off = 0;
-	do {
-		bytes = send(fd, &send_buf[off], HTTP_HEAD_LEN - off, 0);
-		if (bytes < 0) {
-			printk("send() failed, err %d\n", errno);
+		fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TLS_1_2);
+		if (fd == -1) {
+			printk("Failed to open socket!\n");
 			goto clean_up;
 		}
-		off += bytes;
-	} while (off < HTTP_HEAD_LEN);
 
-	printk("Sent %d bytes\n", off);
-
-	off = 0;
-	do {
-		bytes = recv(fd, &recv_buf[off], RECV_BUF_SIZE - off, 0);
-		if (bytes < 0) {
-			printk("recv() failed, err %d\n", errno);
+		/* Setup TLS socket options */
+		err = tls_setup(fd);
+		if (err) {
 			goto clean_up;
 		}
-		off += bytes;
-	} while (bytes != 0 /* peer closed connection */);
 
-	printk("Received %d bytes\n", off);
+		printk("Connecting to %s\n", "google.com");
+		err = connect(fd, res->ai_addr, sizeof(struct sockaddr_in));
+		if (err) {
+			printk("connect() failed, err: %d\n", errno);
+			goto clean_up;
+		}
 
-	/* Print HTTP response */
-	p = strstr(recv_buf, "\r\n");
-	if (p) {
-		off = p - recv_buf;
-		recv_buf[off + 1] = '\0';
-		printk("\n>\t %s\n\n", recv_buf);
+		off = 0;
+		do {
+			bytes = send(fd, &send_buf[off], HTTP_HEAD_LEN - off,
+				     0);
+			if (bytes < 0) {
+				printk("send() failed, err %d\n", errno);
+				goto clean_up;
+			}
+			off += bytes;
+		} while (off < HTTP_HEAD_LEN);
+
+		printk("Sent %d bytes\n", off);
+
+		off = 0;
+		do {
+			bytes = recv(fd, &recv_buf[off], RECV_BUF_SIZE - off,
+				     0);
+			if (bytes < 0) {
+				printk("recv() failed, err %d\n", errno);
+				goto clean_up;
+			}
+			off += bytes;
+		} while (bytes != 0 /* peer closed connection */);
+
+		printk("Received %d bytes\n", off);
+
+		/* Print HTTP response */
+		p = strstr(recv_buf, "\r\n");
+		if (p) {
+			off = p - recv_buf;
+			recv_buf[off + 1] = '\0';
+			printk("\n>\t %s\n\n", recv_buf);
+		}
+
+		printk("Finished, closing socket.\n");
+
+	clean_up:
+		freeaddrinfo(res);
+		(void)close(fd);
 	}
-
-	printk("Finished, closing socket.\n");
-
-clean_up:
-	freeaddrinfo(res);
-	(void)close(fd);
 }

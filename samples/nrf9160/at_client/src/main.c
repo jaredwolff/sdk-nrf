@@ -17,5 +17,9 @@ void bsd_recoverable_error_handler(uint32_t err)
 
 void main(void)
 {
+	at_cmd_write("AT+CGDCONT=2,\"IPV4V6\",\"VZWADMIN\"", NULL, 0, NULL);
+	at_cmd_write("AT+CGDCONT=3,\"IPV4V6\",\"VZWINTERNET\"", NULL, 0, NULL);
+	at_cmd_write("AT+CGDCONT=4,\"IPV4V6\",\"VZWAPP\"", NULL, 0, NULL);
+
 	printk("The AT host sample started\n");
 }
